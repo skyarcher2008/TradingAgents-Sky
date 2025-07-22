@@ -381,6 +381,8 @@ cp .env.example .env
 # 3. 构建并启动所有服务
 docker-compose up -d --build
 # 注意：首次运行会构建Docker镜像，需要5-10分钟
+docker-compose --profile management up -d mongo-express
+# 现在您可以在浏览器中访问 http://localhost:8082 来查看MongoDB中保存的所有股票数据和分析结果了！
 
 # 4. 访问应用
 # Web界面: http://localhost:8501

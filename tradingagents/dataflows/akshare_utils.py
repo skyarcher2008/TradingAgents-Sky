@@ -77,12 +77,17 @@ class AKShareProvider:
             else:
                 symbol = symbol.replace('.SZ', '').replace('.SS', '')
             
+            # 获取当前日期用于默认值
+            from datetime import datetime
+            current_year = datetime.now().year
+            current_date = datetime.now().strftime('%Y%m%d')
+            
             # 获取数据
             data = self.ak.stock_zh_a_hist(
                 symbol=symbol,
                 period="daily",
-                start_date=start_date.replace('-', '') if start_date else "20240101",
-                end_date=end_date.replace('-', '') if end_date else "20241231",
+                start_date=start_date.replace('-', '') if start_date else f"{current_year}0101",
+                end_date=end_date.replace('-', '') if end_date else current_date,
                 adjust=""
             )
             
@@ -137,9 +142,14 @@ class AKShareProvider:
 
             logger.info(f"🇭🇰 AKShare获取港股数据: {hk_symbol} ({start_date} 到 {end_date})")
 
+            # 获取当前日期用于默认值
+            from datetime import datetime
+            current_year = datetime.now().year
+            current_date = datetime.now().strftime('%Y%m%d')
+
             # 格式化日期为AKShare需要的格式
-            start_date_formatted = start_date.replace('-', '') if start_date else "20240101"
-            end_date_formatted = end_date.replace('-', '') if end_date else "20241231"
+            start_date_formatted = start_date.replace('-', '') if start_date else f"{current_year}0101"
+            end_date_formatted = end_date.replace('-', '') if end_date else current_date
 
             # 使用AKShare获取港股历史数据（带超时保护）
             import threading

@@ -85,8 +85,31 @@ def create_market_analyst_react(llm, toolkit):
 
         current_date = state["trade_date"]
         ticker = state["company_of_interest"]
+        
+        # 动态计算开始日期（当前日期往前推1年）
+        from datetime import datetime, timedelta
+        try:
+            # 尝试解析 current_date
+            if isinstance(current_date, str):
+                if '-' in current_date:
+                    current_dt = datetime.strptime(current_date, '%Y-%m-%d')
+                else:
+                    current_dt = datetime.strptime(current_date, '%Y%m%d')
+            else:
+                current_dt = datetime.now()
+            
+            # 计算一年前的日期作为开始日期
+            start_dt = current_dt - timedelta(days=365)
+            start_date = start_dt.strftime('%Y-%m-%d')
+            
+        except Exception as e:
+            logger.warning(f"⚠️ 日期解析失败，使用默认范围: {e}")
+            # 如果解析失败，使用当前年份的开始
+            current_year = datetime.now().year
+            start_date = f'{current_year}-01-01'
 
         logger.debug(f"📈 [DEBUG] 输入参数: ticker={ticker}, date={current_date}")
+        logger.debug(f"📈 [DEBUG] 计算的开始日期: {start_date}")
 
         # 检查是否为中国股票
         def is_china_stock(ticker_code):
@@ -115,7 +138,7 @@ def create_market_analyst_react(llm, toolkit):
                             from tradingagents.dataflows.optimized_china_data import get_china_stock_data_cached
                             return get_china_stock_data_cached(
                                 symbol=ticker,
-                                start_date='2025-05-28',
+                                start_date=start_date,
                                 end_date=current_date,
                                 force_refresh=False
                             )
@@ -125,7 +148,7 @@ def create_market_analyst_react(llm, toolkit):
                             try:
                                 return toolkit.get_china_stock_data.invoke({
                                     'stock_code': ticker,
-                                    'start_date': '2025-05-28',
+                                    'start_date': start_date,
                                     'end_date': current_date
                                 })
                             except Exception as e2:
@@ -169,7 +192,7 @@ def create_market_analyst_react(llm, toolkit):
                             from tradingagents.dataflows.optimized_us_data import get_us_stock_data_cached
                             return get_us_stock_data_cached(
                                 symbol=ticker,
-                                start_date='2025-05-28',
+                                start_date=start_date,
                                 end_date=current_date,
                                 force_refresh=False
                             )
@@ -179,7 +202,7 @@ def create_market_analyst_react(llm, toolkit):
                             try:
                                 return toolkit.get_YFin_data_online.invoke({
                                     'symbol': ticker,
-                                    'start_date': '2025-05-28',
+                                    'start_date': start_date,
                                     'end_date': current_date
                                 })
                             except Exception as e2:
@@ -194,7 +217,7 @@ def create_market_analyst_react(llm, toolkit):
                             logger.debug(f"📈 [DEBUG] FinnhubNewsTool调用，股票代码: {ticker}")
                             return toolkit.get_finnhub_news.invoke({
                                 'ticker': ticker,
-                                'start_date': '2025-05-28',
+                                'start_date': start_date,
                                 'end_date': current_date
                             })
                         except Exception as e:

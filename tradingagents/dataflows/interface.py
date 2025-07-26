@@ -30,6 +30,14 @@ except ImportError as e:
     logger.warning(f"⚠️ AKShare港股工具不可用: {e}")
     AKSHARE_HK_AVAILABLE = False
 
+# 导入ETF基金工具
+try:
+    from .etf_fund_provider import get_etf_data_unified, is_etf_fund_code
+    ETF_FUND_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"⚠️ ETF基金工具不可用: {e}")
+    ETF_FUND_AVAILABLE = False
+
 # 尝试导入yfinance相关模块，如果失败则跳过
 try:
     from .yfin_utils import *
@@ -1284,6 +1292,11 @@ def get_china_stock_data_unified(
     Returns:
         str: 格式化的股票数据报告
     """
+    # 优先检查是否为ETF基金代码
+    if ETF_FUND_AVAILABLE and is_etf_fund_code(ticker):
+        logger.info(f"🔍 [统一接口] 识别为ETF基金代码，路由到ETF专用数据源: {ticker}")
+        return get_etf_data_unified(ticker, start_date, end_date)
+    
     # 记录详细的输入参数
     logger.info(f"📊 [统一接口] 开始获取中国股票数据",
                extra={
@@ -1590,7 +1603,12 @@ def get_stock_data_by_market(symbol: str, start_date: str = None, end_date: str 
         str: 格式化的股票数据
     """
     try:
-        from .utils.stock_utils import StockUtils
+        # 优先检查是否为ETF基金代码
+        if ETF_FUND_AVAILABLE and is_etf_fund_code(symbol):
+            logger.info(f"🔍 识别为ETF基金代码: {symbol}")
+            return get_etf_data_unified(symbol, start_date, end_date)
+        
+        from tradingagents.utils.stock_utils import StockUtils
 
         market_info = StockUtils.get_market_info(symbol)
 

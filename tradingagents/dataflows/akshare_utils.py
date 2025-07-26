@@ -65,37 +65,178 @@ class AKShareProvider:
             logger.error(f"⚠️ AKShare超时配置失败: {e}")
             logger.info(f"🔧 使用默认超时设置")
     
-    def get_stock_data(self, symbol: str, start_date: str = None, end_date: str = None) -> Optional[pd.DataFrame]:
-        """获取股票历史数据"""
+    def get_stock_data(self, symbol: str, start_date: Optional[str] = None, end_date: Optional[str] = None, max_retries: int = 3) -> Optional[pd.DataFrame]:
+        """
+        获取股票历史数据
+        
+        Args:
+            symbol: 股票代码
+            start_date: 开始日期
+            end_date: 结束日期
+            max_retries: 最大重试次数（默认3次）
+            
+        Returns:
+            DataFrame or None: 股票数据，如果获取失败返回None
+        """
         if not self.connected:
+            logger.error(f"❌ AKShare未连接")
             return None
         
+        # 转换股票代码格式
+        if len(symbol) == 6:
+            symbol = symbol
+        else:
+            symbol = symbol.replace('.SZ', '').replace('.SS', '')
+        
+        # 获取当前日期用于默认值
+        from datetime import datetime
+        current_year = datetime.now().year
+        current_date = datetime.now().strftime('%Y%m%d')
+        
+        retry_count = 0
+        last_error = None
+        
+        while retry_count < max_retries:
+            try:
+                logger.info(f"📊 [AKShare] 尝试获取股票数据 {symbol} (第{retry_count + 1}/{max_retries}次)")
+                
+                # 获取数据
+                data = self.ak.stock_zh_a_hist(
+                    symbol=symbol,
+                    period="daily",
+                    start_date=start_date.replace('-', '') if start_date else f"{current_year}0101",
+                    end_date=end_date.replace('-', '') if end_date else current_date,
+                    adjust=""
+                )
+                
+                # 检查数据是否有效
+                if data is not None and not data.empty:
+                    logger.info(f"✅ [AKShare] 成功获取股票数据 {symbol}, 共{len(data)}条记录")
+                    return data
+                else:
+                    # 数据为空，说明AKShare数据库中找不到该代码
+                    error_msg = f"AKShare数据库中找不到股票代码: {symbol}"
+                    logger.error(f"❌ [AKShare] {error_msg}")
+                    # 立即返回None，不再重试
+                    return None
+                    
+            except Exception as e:
+                error_msg = f"AKShare获取股票数据异常: {str(e)}"
+                logger.warning(f"⚠️ [AKShare] 第{retry_count + 1}次尝试失败: {error_msg}")
+                last_error = error_msg
+                
+                # 检查是否是明确的"找不到数据"错误
+                if self._is_stock_not_found_error(str(e)):
+                    logger.error(f"❌ [AKShare] 数据库中不存在股票代码: {symbol}")
+                    # 立即返回None，不再重试
+                    return None
+            
+            retry_count += 1
+            
+            # 如果不是最后一次重试，等待一段时间再重试
+            if retry_count < max_retries:
+                import time
+                wait_time = retry_count * 2  # 递增等待时间：2s, 4s, 6s...
+                logger.info(f"⏳ [AKShare] 等待 {wait_time} 秒后重试...")
+                time.sleep(wait_time)
+        
+        # 所有重试都失败了
+        logger.error(f"❌ [AKShare] 获取股票数据最终失败 {symbol}: {last_error}")
+        return None
+    
+    def _validate_stock_code(self, symbol: str) -> bool:
+        """
+        验证股票代码格式是否正确
+        
+        Args:
+            symbol: 股票代码
+            
+        Returns:
+            bool: 代码格式是否正确
+        """
+        if not symbol:
+            return False
+            
+        # A股代码应该是6位数字
+        if len(symbol) == 6 and symbol.isdigit():
+            # 检查A股代码规则
+            if symbol.startswith(('000', '001', '002', '003')):  # 深交所主板/中小板
+                return True
+            elif symbol.startswith(('600', '601', '603', '605', '688')):  # 上交所主板/科创板
+                return True
+            elif symbol.startswith('300'):  # 创业板
+                return True
+            elif symbol.startswith('8'):  # 新三板
+                return True
+            elif symbol.startswith(('159', '160', '161', '162', '163', '164', '165', '166', '167', '168', '169')):  # ETF基金
+                return True
+            elif symbol.startswith(('180', '184')):  # 债券ETF
+                return True
+            elif symbol.startswith(('501', '502', '503', '504', '505', '506', '507', '508', '509')):  # 场内基金
+                return True
+            elif symbol.startswith(('510', '511', '512', '513', '514', '515', '516', '517', '518', '519')):  # ETF/LOF基金
+                return True
+            elif symbol.startswith(('150', '151')):  # 分级基金
+                return True
+        
+        return False
+    
+    def _verify_stock_exists(self, symbol: str) -> bool:
+        """
+        验证股票代码是否存在于A股市场
+        
+        Args:
+            symbol: 股票代码
+            
+        Returns:
+            bool: 股票是否存在
+        """
         try:
-            # 转换股票代码格式
-            if len(symbol) == 6:
-                symbol = symbol
-            else:
-                symbol = symbol.replace('.SZ', '').replace('.SS', '')
-            
-            # 获取当前日期用于默认值
-            from datetime import datetime
-            current_year = datetime.now().year
-            current_date = datetime.now().strftime('%Y%m%d')
-            
-            # 获取数据
-            data = self.ak.stock_zh_a_hist(
-                symbol=symbol,
-                period="daily",
-                start_date=start_date.replace('-', '') if start_date else f"{current_year}0101",
-                end_date=end_date.replace('-', '') if end_date else current_date,
-                adjust=""
-            )
-            
-            return data
-            
+            # 简化验证逻辑，基于股票代码格式判断
+            # 因为获取完整股票列表可能很慢，我们使用更轻量的验证方式
+            if not self._validate_stock_code(symbol):
+                return False
+                
+            # 尝试获取股票基本信息来验证
+            import akshare as ak
+            try:
+                # 使用更轻量的API来验证
+                info = ak.stock_individual_info_em(symbol=symbol)
+                return info is not None and not info.empty
+            except:
+                # 如果单独信息API失败，假设股票存在（避免误杀）
+                return True
+                
         except Exception as e:
-            logger.error(f"❌ AKShare获取股票数据失败: {e}")
-            return None
+            logger.warning(f"⚠️ [AKShare] 验证股票代码时出错: {e}")
+            # 如果无法验证，假设存在（避免误杀）
+            return True
+    
+    def _is_stock_not_found_error(self, error_message: str) -> bool:
+        """
+        判断错误是否是股票代码不存在导致的
+        
+        Args:
+            error_message: 错误信息
+            
+        Returns:
+            bool: 是否是股票不存在错误
+        """
+        not_found_keywords = [
+            '未找到',
+            'not found',
+            '无数据',
+            'no data',
+            '不存在',
+            'does not exist',
+            '无效代码',
+            'invalid code',
+            '无效股票',
+            'invalid stock'
+        ]
+        
+        error_lower = error_message.lower()
+        return any(keyword in error_lower for keyword in not_found_keywords)
     
     def get_stock_info(self, symbol: str) -> Dict[str, Any]:
         """获取股票基本信息"""
@@ -120,7 +261,7 @@ class AKShareProvider:
             logger.error(f"❌ AKShare获取股票信息失败: {e}")
             return {'symbol': symbol, 'name': f'股票{symbol}', 'source': 'akshare'}
 
-    def get_hk_stock_data(self, symbol: str, start_date: str = None, end_date: str = None) -> Optional[pd.DataFrame]:
+    def get_hk_stock_data(self, symbol: str, start_date: Optional[str] = None, end_date: Optional[str] = None) -> Optional[pd.DataFrame]:
         """
         获取港股历史数据
 
@@ -340,7 +481,7 @@ def get_akshare_provider() -> AKShareProvider:
 
 
 # 便捷函数
-def get_hk_stock_data_akshare(symbol: str, start_date: str = None, end_date: str = None) -> str:
+def get_hk_stock_data_akshare(symbol: str, start_date: Optional[str] = None, end_date: Optional[str] = None) -> str:
     """
     使用AKShare获取港股数据的便捷函数
 

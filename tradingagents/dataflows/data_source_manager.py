@@ -320,14 +320,29 @@ class DataSourceManager:
                 logger.debug(f"📊 [AKShare] 调用成功: 耗时={duration:.2f}s, 数据条数={len(data)}, 结果长度={len(result)}")
                 return result
             else:
-                result = f"❌ 未能获取{symbol}的股票数据"
+                result = f"❌ 未能获取股票 {symbol} 的数据，请检查股票代码是否正确"
                 logger.warning(f"⚠️ [AKShare] 数据为空: 耗时={duration:.2f}s")
                 return result
 
+        except ValueError as ve:
+            # 股票代码不存在的特定错误
+            duration = time.time() - start_time
+            error_msg = f"❌ 股票代码 {symbol} 不存在，请检查输入是否正确"
+            logger.error(f"❌ [AKShare] 股票代码验证失败: {ve}, 耗时={duration:.2f}s")
+            return error_msg
         except Exception as e:
             duration = time.time() - start_time
-            logger.error(f"❌ [AKShare] 调用失败: {e}, 耗时={duration:.2f}s", exc_info=True)
-            return f"❌ AKShare获取{symbol}数据失败: {e}"
+            error_msg = str(e)
+            
+            # 检查是否是重试后的最终错误
+            if "已尝试" in error_msg and "次" in error_msg:
+                # 这是重试后的最终错误，直接返回用户友好的消息
+                logger.error(f"❌ [AKShare] 重试失败: {e}, 耗时={duration:.2f}s")
+                return f"❌ {error_msg}"
+            else:
+                # 其他错误
+                logger.error(f"❌ [AKShare] 调用失败: {e}, 耗时={duration:.2f}s", exc_info=True)
+                return f"❌ 获取股票 {symbol} 数据失败: {error_msg}"
     
     def _get_baostock_data(self, symbol: str, start_date: str, end_date: str) -> str:
         """使用BaoStock获取数据"""

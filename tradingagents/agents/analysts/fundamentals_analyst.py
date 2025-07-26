@@ -85,9 +85,31 @@ def create_fundamentals_analyst(llm, toolkit):
 
         current_date = state["trade_date"]
         ticker = state["company_of_interest"]
-        start_date = '2025-05-28'
+        
+        # 动态计算开始日期（当前日期往前推1年）
+        from datetime import datetime, timedelta
+        try:
+            # 尝试解析 current_date
+            if isinstance(current_date, str):
+                if '-' in current_date:
+                    current_dt = datetime.strptime(current_date, '%Y-%m-%d')
+                else:
+                    current_dt = datetime.strptime(current_date, '%Y%m%d')
+            else:
+                current_dt = datetime.now()
+            
+            # 计算一年前的日期作为开始日期
+            start_dt = current_dt - timedelta(days=365)
+            start_date = start_dt.strftime('%Y-%m-%d')
+            
+        except Exception as e:
+            logger.warning(f"⚠️ 日期解析失败，使用默认范围: {e}")
+            # 如果解析失败，使用当前年份的开始
+            current_year = datetime.now().year
+            start_date = f'{current_year}-01-01'
 
         logger.debug(f"📊 [DEBUG] 输入参数: ticker={ticker}, date={current_date}")
+        logger.debug(f"📊 [DEBUG] 计算的开始日期: {start_date}")
         logger.debug(f"📊 [DEBUG] 当前状态中的消息数量: {len(state.get('messages', []))}")
         logger.debug(f"📊 [DEBUG] 现有基本面报告: {state.get('fundamentals_report', 'None')}")
 

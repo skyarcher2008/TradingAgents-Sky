@@ -14,6 +14,8 @@ services:
       # - ./scripts:/app/scripts
       # 日志目录映射
       - ./logs:/app/logs
+      # 数据目录映射 - 历史记录持久化
+      - ./data:/app/data
     env_file:
       - .env
     environment:
@@ -23,10 +25,18 @@ services:
       # 日志配置
       TRADINGAGENTS_LOG_LEVEL: "INFO"
       TRADINGAGENTS_LOG_DIR: "/app/logs"
-      # Docker专用数据库配置
-      TRADINGAGENTS_MONGODB_URL: mongodb://admin:tradingagents123@mongodb:27017/tradingagents?authSource=admin
-      TRADINGAGENTS_REDIS_URL: redis://:tradingagents123@redis:6379
-      TRADINGAGENTS_CACHE_TYPE: redis
+      # 启用数据库连接
+      MONGODB_ENABLED: "true"
+      REDIS_ENABLED: "true"
+      # MongoDB连接配置
+      MONGODB_HOST: "mongodb"
+      MONGODB_PORT: "27017"
+      MONGODB_USERNAME: "admin"
+      MONGODB_PASSWORD: "tradingagents123"
+      MONGODB_DATABASE: "tradingagents"
+      # Redis连接配置
+      REDIS_HOST: "redis"
+      REDIS_PORT: "6379"
       # Docker环境标识
       DOCKER_CONTAINER: "true"
       DISPLAY: ":99"

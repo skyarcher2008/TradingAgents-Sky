@@ -7,7 +7,14 @@ import os
 import uuid
 from pathlib import Path
 from datetime import datetime
-from dotenv import load_dotenv
+
+# 尝试导入dotenv，如果失败则跳过
+try:
+    from dotenv import load_dotenv
+    DOTENV_AVAILABLE = True
+except ImportError:
+    DOTENV_AVAILABLE = False
+    print("⚠️ python-dotenv not available, using environment variables directly")
 
 # 导入日志模块
 from tradingagents.utils.logging_manager import get_logger, get_logger_manager
@@ -17,8 +24,17 @@ logger = get_logger('web')
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
+# 导入历史记录管理器
+try:
+    from tradingagents.utils.analysis_history import get_history_manager
+    HISTORY_MANAGER_AVAILABLE = True
+except ImportError:
+    HISTORY_MANAGER_AVAILABLE = False
+    logger.warning("⚠️ 历史记录管理器不可用")
+
 # 确保环境变量正确加载
-load_dotenv(project_root / ".env", override=True)
+if DOTENV_AVAILABLE:
+    load_dotenv(project_root / ".env", override=True)
 
 # 导入统一日志系统
 from tradingagents.utils.logging_init import setup_web_logging
@@ -352,14 +368,104 @@ def run_stock_analysis(stock_symbol, analysis_date, analysts, research_depth, ll
 
         # 记录分析完成的详细日志
         analysis_duration = time.time() - analysis_start_time
+        analysis_end_time = datetime.now()
 
         # 计算总成本（如果有Token跟踪）
         total_cost = 0.0
+        token_usage = {}
         if TOKEN_TRACKING_ENABLED:
             try:
                 total_cost = token_tracker.get_session_cost(session_id)
+                token_usage = token_tracker.get_session_usage(session_id)
             except:
                 pass
+
+        # 保存分析历史记录
+        if HISTORY_MANAGER_AVAILABLE:
+            try:
+                # 清理结果中不可序列化的对象
+                def clean_results_for_serialization(data):
+                    """深度清理结果中不可序列化的对象"""
+                    try:
+                        # 检查是否是LangChain对象
+                        if hasattr(data, '__class__'):
+                            class_str = str(data.__class__)
+                            if 'langchain' in class_str.lower() or 'HumanMessage' in class_str or 'AIMessage' in class_str:
+                                # 是LangChain对象，提取内容
+                                if hasattr(data, 'content'):
+                                    return str(data.content)
+                                else:
+                                    return str(data)
+                        
+                        # 如果是字典，递归清理每个键值对
+                        if isinstance(data, dict):
+                            cleaned_data = {}
+                            for key, value in data.items():
+                                try:
+                                    cleaned_data[key] = clean_results_for_serialization(value)
+                                except Exception as e:
+                                    logger.warning(f"⚠️ 无法清理字典键 {key}: {e}")
+                                    cleaned_data[key] = f"<清理失败: {type(value).__name__}>"
+                            return cleaned_data
+                        
+                        # 如果是列表或元组，递归清理每个元素
+                        elif isinstance(data, (list, tuple)):
+                            cleaned_list = []
+                            for i, item in enumerate(data):
+                                try:
+                                    cleaned_item = clean_results_for_serialization(item)
+                                    cleaned_list.append(cleaned_item)
+                                except Exception as e:
+                                    logger.warning(f"⚠️ 无法清理列表项 {i}: {e}")
+                                    cleaned_list.append(f"<清理失败: {type(item).__name__}>")
+                            return cleaned_list if isinstance(data, list) else tuple(cleaned_list)
+                        
+                        # 如果是集合，转换为列表并清理
+                        elif isinstance(data, set):
+                            cleaned_set = []
+                            for item in data:
+                                try:
+                                    cleaned_item = clean_results_for_serialization(item)
+                                    cleaned_set.append(cleaned_item)
+                                except Exception as e:
+                                    logger.warning(f"⚠️ 无法清理集合项: {e}")
+                                    cleaned_set.append(f"<清理失败: {type(item).__name__}>")
+                            return cleaned_set
+                        
+                        # 检查是否可以JSON序列化
+                        import json
+                        json.dumps(data)
+                        return data
+                        
+                    except (TypeError, ValueError) as e:
+                        # 不可序列化的对象，转换为字符串
+                        logger.warning(f"⚠️ 对象不可序列化，转为字符串: {type(data).__name__}")
+                        return str(data)
+                
+                # 清理results参数
+                cleaned_results = clean_results_for_serialization(results) if results else None
+                
+                history_manager = get_history_manager()
+                record_id = history_manager.save_analysis_record(
+                    session_id=session_id,
+                    stock_symbol=stock_symbol,
+                    analysis_date=analysis_date,
+                    market_type=market_type,
+                    analysts=analysts,
+                    research_depth=research_depth,
+                    llm_provider=llm_provider,
+                    llm_model=llm_model,
+                    start_time=datetime.fromtimestamp(analysis_start_time),
+                    end_time=analysis_end_time,
+                    duration=analysis_duration,
+                    success=True,
+                    results=cleaned_results,
+                    token_usage=token_usage,
+                    total_cost=total_cost
+                )
+                logger.info(f"✅ 分析历史记录已保存: {record_id}")
+            except Exception as e:
+                logger.warning(f"⚠️ 保存分析历史记录失败: {e}")
 
         logger_manager.log_analysis_complete(
             logger, stock_symbol, "comprehensive_analysis", session_id,
@@ -400,6 +506,43 @@ def run_stock_analysis(stock_symbol, analysis_date, analysts, research_depth, ll
                         'success': False,
                         'event_type': 'web_analysis_error'
                     }, exc_info=True)
+
+        # 保存失败的分析历史记录
+        if HISTORY_MANAGER_AVAILABLE:
+            try:
+                history_manager = get_history_manager()
+                analysis_end_time = datetime.now()
+                
+                # 计算Token使用情况
+                total_cost = 0.0
+                token_usage = {}
+                if TOKEN_TRACKING_ENABLED:
+                    try:
+                        total_cost = token_tracker.get_session_cost(session_id)
+                        token_usage = token_tracker.get_session_usage(session_id)
+                    except:
+                        pass
+                
+                record_id = history_manager.save_analysis_record(
+                    session_id=session_id,
+                    stock_symbol=stock_symbol,
+                    analysis_date=analysis_date,
+                    market_type=market_type,
+                    analysts=analysts,
+                    research_depth=research_depth,
+                    llm_provider=llm_provider,
+                    llm_model=llm_model,
+                    start_time=datetime.fromtimestamp(analysis_start_time),
+                    end_time=analysis_end_time,
+                    duration=analysis_duration,
+                    success=False,
+                    error_message=str(e),
+                    token_usage=token_usage,
+                    total_cost=total_cost
+                )
+                logger.info(f"✅ 失败分析历史记录已保存: {record_id}")
+            except Exception as history_error:
+                logger.warning(f"⚠️ 保存失败分析历史记录失败: {history_error}")
 
         # 如果真实分析失败，返回模拟数据用于演示
         return generate_demo_results(stock_symbol, analysis_date, analysts, research_depth, llm_provider, llm_model, str(e), market_type)

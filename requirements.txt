@@ -35,3 +35,4 @@ pymongo  # MongoDB数据库支持，用于Token使用记录存储
 markdown>=3.4.0  # Markdown处理，用于报告生成
 pypandoc>=1.11  # 文档格式转换，用于导出报告功能
 python-dotenv>=1.0.0  # 环境变量管理，用于.env文件解析
+toml>=0.10.0  # TOML配置文件解析，用于项目配置管理

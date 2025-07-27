@@ -383,6 +383,20 @@ docker-compose up -d --build
 # 注意：首次运行会构建Docker镜像，需要5-10分钟
 docker-compose --profile management up -d mongo-express
 # 现在您可以在浏览器中访问 http://localhost:8082 来查看MongoDB中保存的所有股票数据和分析结果了！
+docker system prune -a -f
+# 清理Docker缓存但保留镜像
+docker system prune -f
+# 停止所有服务
+docker-compose down
+
+# 3. 重启Web应用以刷新内存缓存
+docker-compose restart web
+
+# 删除数据卷（会清空所有数据库数据）
+docker-compose down -v
+
+# 重新构建和启动
+docker-compose up -d --build
 
 # 4. 访问应用
 # Web界面: http://localhost:8501

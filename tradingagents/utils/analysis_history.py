@@ -417,6 +417,126 @@ class AnalysisHistoryManager:
             self.logger.error(f"❌ 删除旧记录失败: {e}")
             return 0
 
+    def delete_record_by_id(self, record_id: str) -> bool:
+        """根据记录ID删除单条记录"""
+        try:
+            if self.collection is not None:
+                # MongoDB删除
+                result = self.collection.delete_one({"record_id": record_id})
+                deleted = result.deleted_count > 0
+            else:
+                # 文件删除（标记为已删除，实际上是重写文件）
+                deleted = self._delete_from_files(record_id)
+            
+            if deleted:
+                self.logger.info(f"✅ 删除记录: {record_id}")
+                
+                # 从Redis缓存中删除
+                if hasattr(self, 'redis_client') and self.redis_client is not None:
+                    try:
+                        self.redis_client.delete(f"analysis_history:{record_id}")
+                    except Exception as e:
+                        self.logger.warning(f"⚠️ Redis删除失败: {e}")
+                        
+                return True
+            else:
+                self.logger.warning(f"⚠️ 未找到记录: {record_id}")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"❌ 删除记录失败: {e}")
+            return False
+    
+    def delete_records_by_ids(self, record_ids: List[str]) -> int:
+        """根据记录ID列表批量删除记录"""
+        deleted_count = 0
+        
+        self.logger.info(f"🗑️ 开始删除 {len(record_ids)} 条记录: {record_ids[:3]}{'...' if len(record_ids) > 3 else ''}")
+        
+        try:
+            if self.collection is not None:
+                # MongoDB批量删除
+                self.logger.info(f"📊 使用MongoDB删除记录")
+                result = self.collection.delete_many({"record_id": {"$in": record_ids}})
+                deleted_count = result.deleted_count
+                self.logger.info(f"✅ MongoDB删除结果: {deleted_count}/{len(record_ids)} 条记录")
+            else:
+                # 文件批量删除
+                self.logger.info(f"📁 使用文件存储删除记录")
+                for record_id in record_ids:
+                    if self._delete_from_files(record_id):
+                        deleted_count += 1
+                self.logger.info(f"✅ 文件删除结果: {deleted_count}/{len(record_ids)} 条记录")
+            
+            # 从Redis缓存中删除
+            if hasattr(self, 'redis_client') and self.redis_client is not None:
+                try:
+                    keys = [f"analysis_history:{record_id}" for record_id in record_ids]
+                    if keys:
+                        cache_deleted = self.redis_client.delete(*keys)
+                        self.logger.info(f"🗂️ Redis缓存删除: {cache_deleted} 个键")
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Redis批量删除失败: {e}")
+            
+            self.logger.info(f"✅ 批量删除完成: {deleted_count} 条记录")
+            return deleted_count
+            
+        except Exception as e:
+            self.logger.error(f"❌ 批量删除记录失败: {e}")
+            return deleted_count
+    
+    def _delete_from_files(self, record_id: str) -> bool:
+        """从文件中删除记录（通过重写文件）"""
+        import os
+        from pathlib import Path
+        import tempfile
+        
+        project_root = Path(__file__).parent.parent.parent
+        history_dir = project_root / "data" / "analysis_history"
+        
+        if not history_dir.exists():
+            return False
+        
+        deleted = False
+        
+        # 遍历所有历史文件
+        for file_path in history_dir.glob("analysis_*.jsonl"):
+            try:
+                lines_to_keep = []
+                found_record = False
+                
+                # 读取文件，过滤掉要删除的记录
+                with open(file_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        if line.strip():
+                            try:
+                                record = json.loads(line.strip())
+                                if record.get("record_id") == record_id:
+                                    found_record = True
+                                    deleted = True
+                                else:
+                                    lines_to_keep.append(line)
+                            except json.JSONDecodeError:
+                                # 保留无法解析的行
+                                lines_to_keep.append(line)
+                
+                # 如果找到了记录，重写文件
+                if found_record:
+                    if lines_to_keep:
+                        # 有其他记录，重写文件
+                        with open(file_path, "w", encoding="utf-8") as f:
+                            f.writelines(lines_to_keep)
+                    else:
+                        # 文件为空，删除文件
+                        os.remove(file_path)
+                    break
+                    
+            except Exception as e:
+                self.logger.warning(f"⚠️ 处理文件失败: {file_path}: {e}")
+                continue
+        
+        return deleted
+
 # 全局实例
 _history_manager = None
 

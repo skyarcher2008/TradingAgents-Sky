@@ -389,6 +389,7 @@ docker system prune -f
 # 停止所有服务
 docker-compose down
 
+docker-compose logs -f web
 # 3. 重启Web应用以刷新内存缓存
 docker-compose restart web
 
@@ -403,6 +404,32 @@ docker-compose up -d --build
 # 数据库管理: http://localhost:8081
 # 缓存管理: http://localhost:8082
 ```
+#阿里云配置
+
+
+# 2. 为snap Docker创建配置目录
+sudo mkdir -p /var/snap/docker/current/config
+
+# 3. 创建snap Docker配置文件
+sudo tee /var/snap/docker/current/config/daemon.json <<-'EOF'
+{
+  "registry-mirrors": [
+    "https://docker.1ms.run",
+    "https://docker.sunzishaokao.com", 
+    "https://docker.xuanyuan.me",
+    "https://hub-mirror.c.163.com",
+    "https://reg-mirror.qiniu.com"
+  ]
+}
+EOF
+
+# 4. 重启snap Docker服务
+sudo snap restart docker
+
+# 5. 验证配置
+docker info | grep -A 10 -i mirror
+
+
 
 **Docker部署包含的服务**:
 

@@ -83,6 +83,7 @@ def render_records_view(history_manager):
             records = []  # 暂时为空，可以后续扩展
             st.info("⚠️ '仅失败'过滤功能暂未实现")
         else:
+            # 直接获取最新数据，不使用缓存
             records = history_manager.get_analysis_history(
                 stock_symbol=stock_filter if stock_filter else None,
                 limit=limit,
@@ -104,7 +105,74 @@ def render_records_view(history_manager):
         # 格式化显示
         display_df = prepare_display_dataframe(df)
         
+        # 添加删除功能
+        st.markdown("### 🗑️ 记录管理")
+        
+        # 删除选项
+        delete_col1, delete_col2 = st.columns([3, 1])
+        
+        with delete_col1:
+            # 使用多选框让用户选择要删除的记录
+            if 'record_id' in df.columns:
+                # 创建显示选项，包含股票代码、时间和状态
+                delete_options = []
+                for _, record in df.iterrows():
+                    created_at = record.get('created_at', '')
+                    if isinstance(created_at, str):
+                        created_at = created_at[:19]  # 截取到秒
+                    status = "✅" if record.get('success', False) else "❌"
+                    option_text = f"{record.get('stock_symbol', 'N/A')} - {created_at} - {status}"
+                    delete_options.append({
+                        'text': option_text,
+                        'record_id': record.get('record_id'),
+                        'index': len(delete_options)
+                    })
+                
+                # 多选组件
+                selected_for_deletion = st.multiselect(
+                    "选择要删除的记录（可多选）:",
+                    options=[opt['index'] for opt in delete_options],
+                    format_func=lambda x: delete_options[x]['text'],
+                    help="⚠️ 删除操作不可恢复，请谨慎选择"
+                )
+            else:
+                st.warning("⚠️ 记录缺少ID字段，无法执行删除操作")
+                selected_for_deletion = []
+        
+        with delete_col2:
+            # 删除按钮
+            if selected_for_deletion:
+                st.write("")  # 添加一些空间
+                st.write("")  # 添加一些空间
+                
+                # 获取要删除的记录ID
+                record_ids_to_delete = [delete_options[idx]['record_id'] for idx in selected_for_deletion]
+                
+                # 一步确认删除
+                if st.button("🗑️ 删除选中记录", type="secondary", help=f"将删除 {len(selected_for_deletion)} 条记录"):
+                    with st.spinner("正在删除记录..."):
+                        # 立即执行删除
+                        deleted_count = history_manager.delete_records_by_ids(record_ids_to_delete)
+                        
+                        if deleted_count > 0:
+                            st.success(f"✅ 成功删除了 {deleted_count} 条记录")
+                            
+                            # 清除所有session state
+                            for key in list(st.session_state.keys()):
+                                if 'selected' in key.lower() or 'confirm' in key.lower():
+                                    del st.session_state[key]
+                            
+                            # 等待一点时间确保数据库操作完成
+                            import time
+                            time.sleep(0.5)
+                            
+                            # 强制刷新页面
+                            st.rerun()
+                        else:
+                            st.error("❌ 删除失败，请检查记录是否存在")
+        
         # 显示记录表格
+        st.markdown("### 📊 记录详情")
         st.dataframe(
             display_df,
             use_container_width=True,
@@ -169,34 +237,34 @@ def prepare_display_dataframe(df):
         'success': '状态'
     }
     
-    # 选择要显示的列
+    # 选择要显示的列（不包括record_id，但会保留在原始数据中用于删除）
     display_columns = ['stock_symbol', 'created_at', 'market_type', 'llm_provider', 
                       'llm_model', 'research_depth', 'duration', 'total_cost', 'success']
     
-    # 过滤存在的列
-    available_columns = [col for col in display_columns if col in display_df.columns]
-    display_df = display_df[available_columns]
+    # 过滤存在的列用于显示
+    available_display_columns = [col for col in display_columns if col in display_df.columns]
+    display_for_table = display_df[available_display_columns].copy()
     
-    # 重命名列
-    display_df = display_df.rename(columns=column_mapping)
+    # 重命名显示列
+    display_for_table = display_for_table.rename(columns=column_mapping)
     
     # 格式化数据
-    if '分析时间' in display_df.columns:
-        display_df['分析时间'] = pd.to_datetime(display_df['分析时间']).dt.strftime('%Y-%m-%d %H:%M:%S')
+    if '分析时间' in display_for_table.columns:
+        display_for_table['分析时间'] = pd.to_datetime(display_for_table['分析时间']).dt.strftime('%Y-%m-%d %H:%M:%S')
     
-    if '状态' in display_df.columns:
-        display_df['状态'] = display_df['状态'].map({True: '✅ 成功', False: '❌ 失败'})
+    if '状态' in display_for_table.columns:
+        display_for_table['状态'] = display_for_table['状态'].map({True: '✅ 成功', False: '❌ 失败'})
     
-    if '耗时(秒)' in display_df.columns:
-        display_df['耗时(秒)'] = display_df['耗时(秒)'].round(2)
+    if '耗时(秒)' in display_for_table.columns:
+        display_for_table['耗时(秒)'] = display_for_table['耗时(秒)'].round(2)
     
-    if '成本($)' in display_df.columns:
-        display_df['成本($)'] = display_df['成本($)'].round(4)
+    if '成本($)' in display_for_table.columns:
+        display_for_table['成本($)'] = display_for_table['成本($)'].round(4)
     
     # 修复研究深度列的数据类型问题，确保Arrow序列化兼容
-    if '研究深度' in display_df.columns:
+    if '研究深度' in display_for_table.columns:
         # 将所有研究深度值转换为字符串，避免Arrow类型转换错误
-        display_df['研究深度'] = display_df['研究深度'].astype(str)
+        display_for_table['研究深度'] = display_for_table['研究深度'].astype(str)
         
         # 可选：将数字映射为更友好的描述
         depth_mapping = {
@@ -206,9 +274,9 @@ def prepare_display_dataframe(df):
             '4': '4级-深度',
             '5': '5级-极深'
         }
-        display_df['研究深度'] = display_df['研究深度'].map(lambda x: depth_mapping.get(str(x), str(x)))
+        display_for_table['研究深度'] = display_for_table['研究深度'].map(lambda x: depth_mapping.get(str(x), str(x)))
     
-    return display_df
+    return display_for_table
 
 def show_analysis_details(record):
     """显示分析详情"""
@@ -470,6 +538,7 @@ def render_management_tools(history_manager):
     col1, col2 = st.columns(2)
     
     with col1:
+        st.markdown("**批量清理**")
         days = st.number_input("清理多少天前的记录", min_value=1, max_value=365, value=30)
         
         if st.button("🗑️ 清理旧记录", type="secondary"):
@@ -480,6 +549,43 @@ def render_management_tools(history_manager):
                 st.error(f"❌ 清理失败: {e}")
     
     with col2:
+        st.markdown("**快速删除**")
+        
+        # 按股票代码删除
+        stock_to_delete = st.text_input("输入要删除的股票代码", placeholder="例如: AAPL")
+        
+        if st.button("🗑️ 删除指定股票记录", type="secondary"):
+            if stock_to_delete:
+                try:
+                    # 获取该股票的所有记录
+                    records_to_delete = history_manager.get_analysis_history(
+                        stock_symbol=stock_to_delete,
+                        limit=1000
+                    )
+                    
+                    if records_to_delete:
+                        record_ids = [r.get('record_id') for r in records_to_delete if r.get('record_id')]
+                        deleted_count = history_manager.delete_records_by_ids(record_ids)
+                        if deleted_count > 0:
+                            st.success(f"✅ 已删除股票 {stock_to_delete} 的 {deleted_count} 条记录")
+                            # 标记数据已更新
+                            st.session_state['just_deleted'] = True
+                        else:
+                            st.info(f"📭 未找到股票 {stock_to_delete} 的记录或删除失败")
+                    else:
+                        st.info(f"📭 未找到股票 {stock_to_delete} 的记录")
+                        
+                except Exception as e:
+                    st.error(f"❌ 删除失败: {e}")
+            else:
+                st.warning("⚠️ 请输入股票代码")
+    
+    # 数据导出
+    st.markdown("### 📤 数据管理")
+    
+    export_col1, export_col2 = st.columns(2)
+    
+    with export_col1:
         # 数据导出
         if st.button("📤 导出数据", type="secondary"):
             try:
@@ -497,6 +603,43 @@ def render_management_tools(history_manager):
                     st.info("📭 暂无数据可导出")
             except Exception as e:
                 st.error(f"❌ 导出失败: {e}")
+    
+    with export_col2:
+        # 清空所有记录（危险操作）
+        st.markdown("**⚠️ 危险操作**")
+        if st.button("🚨 清空所有记录", type="secondary"):
+            # 需要二次确认
+            if st.session_state.get('confirm_clear_all', False):
+                try:
+                    # 获取所有记录ID
+                    all_records = history_manager.get_analysis_history(limit=10000)
+                    if all_records:
+                        record_ids = [r.get('record_id') for r in all_records if r.get('record_id')]
+                        deleted_count = history_manager.delete_records_by_ids(record_ids)
+                        if deleted_count > 0:
+                            st.success(f"✅ 已清空所有记录，共删除 {deleted_count} 条")
+                            # 标记数据已更新
+                            st.session_state['just_deleted'] = True
+                        else:
+                            st.error("❌ 清空操作失败")
+                    else:
+                        st.info("📭 没有记录需要清空")
+                    
+                    st.session_state['confirm_clear_all'] = False
+                except Exception as e:
+                    st.error(f"❌ 清空失败: {e}")
+            else:
+                st.warning("⚠️ 此操作将删除所有历史记录，不可恢复！")
+                clear_col1, clear_col2 = st.columns(2)
+                
+                with clear_col1:
+                    if st.button("✅ 确认清空", type="primary", key="confirm_clear_all_btn"):
+                        st.session_state['confirm_clear_all'] = True
+                        st.rerun()
+                
+                with clear_col2:
+                    if st.button("❌ 取消", key="cancel_clear_all_btn"):
+                        st.session_state['confirm_clear_all'] = False
     
     # 系统信息
     st.markdown("### ℹ️ 系统信息")

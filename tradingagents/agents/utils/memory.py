@@ -31,15 +31,45 @@ class ChromaDBManager:
     def __init__(self):
         if not self._initialized:
             try:
-                # 使用更兼容的ChromaDB配置
-                settings = Settings(
-                    allow_reset=True,
-                    anonymized_telemetry=False,
-                    is_persistent=False
-                )
-                self._client = chromadb.Client(settings)
+                # 先尝试清理任何现有的ChromaDB实例
+                self._cleanup_existing_instances()
+                
+                # 使用最简单的内存模式 ChromaDB 配置
+                try:
+                    # 尝试使用 EphemeralClient（内存模式）
+                    import chromadb
+                    self._client = chromadb.EphemeralClient()
+                    logger.info(f"📚 [ChromaDB] 使用 EphemeralClient 初始化完成")
+                except Exception as ephemeral_e:
+                    logger.warning(f"⚠️ [ChromaDB] EphemeralClient 失败: {ephemeral_e}")
+                    # 使用最基本的客户端
+                    self._client = chromadb.Client()
+                    logger.info(f"📚 [ChromaDB] 使用基础 Client 初始化完成")
                 self._initialized = True
                 logger.info(f"📚 [ChromaDB] 单例管理器初始化完成")
+            except ValueError as e:
+                if "already exists" in str(e):
+                    logger.warning(f"⚠️ [ChromaDB] 检测到现有实例冲突，尝试重置...")
+                    try:
+                        # 尝试重置ChromaDB
+                        self._reset_chromadb()
+                        # 使用最简单的内存模式
+                        try:
+                            self._client = chromadb.EphemeralClient()
+                            logger.info(f"📚 [ChromaDB] 重置后使用 EphemeralClient 完成")
+                        except Exception:
+                            self._client = chromadb.Client()
+                            logger.info(f"📚 [ChromaDB] 重置后使用基础 Client 完成")
+                        self._initialized = True
+                        logger.info(f"📚 [ChromaDB] 重置后初始化完成")
+                    except Exception as reset_e:
+                        logger.error(f"❌ [ChromaDB] 重置失败: {reset_e}")
+                        # 使用最简单的配置作为备用
+                        self._client = chromadb.Client()
+                        self._initialized = True
+                        logger.info(f"📚 [ChromaDB] 使用备用配置初始化完成")
+                else:
+                    raise e
             except Exception as e:
                 logger.error(f"❌ [ChromaDB] 初始化失败: {e}")
                 # 使用最简单的配置作为备用
@@ -75,6 +105,58 @@ class ChromaDBManager:
             # 缓存集合
             self._collections[name] = collection
             return collection
+
+    def _cleanup_existing_instances(self):
+        """清理现有的 ChromaDB 实例"""
+        try:
+            # 简单的清理方法，主要是重置内部状态
+            logger.info("📚 [ChromaDB] 清理现有实例完成")
+        except Exception as e:
+            logger.warning(f"⚠️ [ChromaDB] 无法清理现有实例: {str(e)}")
+
+    def _reset_chromadb(self):
+        """重置 ChromaDB 实例"""
+        try:
+            if hasattr(self, '_client') and self._client:
+                # 尝试清理现有客户端
+                try:
+                    if hasattr(self._client, 'reset'):
+                        self._client.reset()
+                except:
+                    pass
+                self._client = None
+            
+            if hasattr(self, '_collections'):
+                self._collections.clear()
+                
+            self._initialized = False
+            logger.info("📚 [ChromaDB] 实例重置完成")
+        except Exception as e:
+            logger.warning(f"⚠️ [ChromaDB] 重置过程中的错误: {str(e)}")
+
+    def reset_collection(self, name: str):
+        """重置指定集合"""
+        with self._lock:
+            try:
+                if name in self._collections:
+                    del self._collections[name]
+                
+                # 尝试删除集合
+                if self._client:
+                    try:
+                        self._client.delete_collection(name=name)
+                        logger.info(f"📚 [ChromaDB] 删除集合: {name}")
+                    except:
+                        pass
+                    
+                    # 重新创建集合
+                    collection = self._client.create_collection(name=name)
+                    self._collections[name] = collection
+                    logger.info(f"📚 [ChromaDB] 重置集合完成: {name}")
+                    return collection
+            except Exception as e:
+                logger.error(f"❌ [ChromaDB] 重置集合失败: {name}, 错误: {str(e)}")
+                raise
 
 
 class FinancialSituationMemory:

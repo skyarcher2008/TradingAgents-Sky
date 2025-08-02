@@ -587,87 +587,151 @@ def main():
 
         # 检查是否提交了表单
         if form_data.get('submitted', False):
-            # 验证分析参数
-            is_valid, validation_errors = validate_analysis_params(
-                stock_symbol=form_data['stock_symbol'],
-                analysis_date=form_data['analysis_date'],
-                analysts=form_data['analysts'],
-                research_depth=form_data['research_depth'],
-                market_type=form_data.get('market_type', '美股')
-            )
-
-            if not is_valid:
-                # 显示验证错误
-                for error in validation_errors:
-                    st.error(error)
-            else:
-                # 执行分析
-                st.session_state.analysis_running = True
-
-                # 创建进度显示
-                progress_container = st.container()
-                progress_display = StreamlitProgressDisplay(progress_container)
-                progress_callback = create_progress_callback(progress_display)
-
-                try:
-                    # 显示分析参数
-                    st.info(f"🔍 开始分析: {form_data.get('market_type', '美股')} {form_data['stock_symbol']}")
-
-                    results = run_stock_analysis(
-                        stock_symbol=form_data['stock_symbol'],
+            # 检查是否是批量分析模式
+            if form_data.get('analysis_mode') == '批量分析':
+                # 处理批量分析
+                from utils.batch_processor import get_batch_processor
+                from components.batch_analysis_ui import start_batch_analysis
+                
+                processor = get_batch_processor()
+                stock_input = form_data.get('stock_symbol', '')
+                if isinstance(stock_input, str):
+                    symbols = processor.parse_stock_symbols(stock_input)
+                else:
+                    symbols = []
+                
+                if not symbols:
+                    st.error("❌ 未识别到有效的股票代码，请检查输入格式")
+                elif len(symbols) > 20:
+                    st.error(f"❌ 一次最多支持分析20个股票代码，当前输入了{len(symbols)}个")
+                else:
+                    # 验证第一个股票代码的参数（作为样本验证）
+                    market_type = form_data.get('market_type', '美股')
+                    if not isinstance(market_type, str):
+                        market_type = '美股'
+                        
+                    is_valid, validation_errors = validate_analysis_params(
+                        stock_symbol=symbols[0],
                         analysis_date=form_data['analysis_date'],
                         analysts=form_data['analysts'],
                         research_depth=form_data['research_depth'],
-                        llm_provider=config['llm_provider'],
-                        market_type=form_data.get('market_type', '美股'),
-                        llm_model=config['llm_model'],
-                        progress_callback=progress_callback
+                        market_type=market_type
                     )
+                    
+                    if not is_valid:
+                        st.error("❌ 分析参数验证失败：")
+                        for error in validation_errors:
+                            st.error(f"  • {error}")
+                    else:
+                        # 启动批量分析，传递LLM配置
+                        success = start_batch_analysis(symbols, form_data, config)
+                        if success:
+                            # 设置批量分析模式标志
+                            st.session_state.batch_analysis_active = True
+                            st.rerun()
+            else:
+                # 原有的单个分析逻辑
+                market_type = form_data.get('market_type', '美股')
+                if not isinstance(market_type, str):
+                    market_type = '美股'
+                    
+                # 验证分析参数
+                is_valid, validation_errors = validate_analysis_params(
+                    stock_symbol=form_data['stock_symbol'],
+                    analysis_date=form_data['analysis_date'],
+                    analysts=form_data['analysts'],
+                    research_depth=form_data['research_depth'],
+                    market_type=market_type
+                )
 
-                    # 确保进度条显示100%完成
-                    progress_callback("✅ 分析成功完成！", step=10, total_steps=10)
+                if not is_valid:
+                    # 显示验证错误
+                    for error in validation_errors:
+                        st.error(error)
+                else:
+                    # 执行分析
+                    st.session_state.analysis_running = True
 
-                    # 短暂延迟让用户看到100%完成状态
-                    import time
-                    time.sleep(1)
+                    # 创建进度显示
+                    progress_container = st.container()
+                    progress_display = StreamlitProgressDisplay(progress_container)
+                    progress_callback = create_progress_callback(progress_display)
 
-                    # 清除进度显示
-                    progress_display.clear()
+                    try:
+                        # 显示分析参数
+                        st.info(f"🔍 开始分析: {market_type} {form_data['stock_symbol']}")
 
-                    # 格式化结果
-                    formatted_results = format_analysis_results(results)
+                        results = run_stock_analysis(
+                            stock_symbol=form_data['stock_symbol'],
+                            analysis_date=form_data['analysis_date'],
+                            analysts=form_data['analysts'],
+                            research_depth=form_data['research_depth'],
+                            llm_provider=config['llm_provider'],
+                            market_type=market_type,
+                            llm_model=config['llm_model'],
+                            progress_callback=progress_callback
+                        )
 
-                    st.session_state.analysis_results = formatted_results
-                    st.session_state.last_analysis_time = datetime.datetime.now()
-                    st.success("✅ 分析完成！")
+                        # 确保进度条显示100%完成
+                        progress_callback("✅ 分析成功完成！", step=10, total_steps=10)
 
-                except Exception as e:
-                    # 显示分析失败状态
-                    progress_callback("❌ 分析失败", step=10, total_steps=10)
+                        # 短暂延迟让用户看到100%完成状态
+                        import time
+                        time.sleep(1)
 
-                    # 短暂延迟让用户看到失败状态
-                    import time
-                    time.sleep(1)
+                        # 清除进度显示
+                        progress_display.clear()
 
-                    # 清除进度显示
-                    progress_display.clear()
+                        # 格式化结果
+                        formatted_results = format_analysis_results(results)
 
-                    st.error(f"❌ 分析失败: {str(e)}")
+                        st.session_state.analysis_results = formatted_results
+                        st.session_state.last_analysis_time = datetime.datetime.now()
+                        st.success("✅ 分析完成！")
 
-                    # 显示详细错误信息
-                    with st.expander("🔍 详细错误信息"):
-                        import traceback
-                        st.code(traceback.format_exc())
+                    except Exception as e:
+                        # 显示分析失败状态
+                        progress_callback("❌ 分析失败", step=10, total_steps=10)
 
-                    st.markdown("""
-                    **可能的解决方案:**
-                    1. 检查API密钥是否正确配置
-                    2. 确认网络连接正常
-                    3. 验证股票代码是否有效
-                    4. 尝试减少研究深度或更换模型
-                    """)
-                finally:
-                    st.session_state.analysis_running = False
+                        # 短暂延迟让用户看到失败状态
+                        import time
+                        time.sleep(1)
+
+                        # 清除进度显示
+                        progress_display.clear()
+
+                        st.error(f"❌ 分析失败: {str(e)}")
+
+                        # 显示详细错误信息
+                        with st.expander("🔍 详细错误信息"):
+                            import traceback
+                            st.code(traceback.format_exc())
+
+                        st.markdown("""
+                        **可能的解决方案:**
+                        1. 检查API密钥是否正确配置
+                        2. 确认网络连接正常
+                        3. 验证股票代码是否有效
+                        4. 尝试减少研究深度或更换模型
+                        """)
+                    finally:
+                        st.session_state.analysis_running = False
+        
+        # 显示批量分析监控界面（如果有活跃的批量任务）
+        if st.session_state.get('batch_analysis_active', False):
+            st.markdown("---")
+            from components.batch_analysis_ui import render_batch_analysis_monitor, render_batch_analysis_help
+            render_batch_analysis_monitor()
+            render_batch_analysis_help()
+            
+            # 检查批量分析是否完成
+            from utils.batch_processor import get_batch_processor
+            processor = get_batch_processor()
+            status = processor.get_progress_status()
+            
+            if not status['is_running'] and status['total_tasks'] == 0:
+                # 批量分析已完成且无任务，清除标志
+                st.session_state.batch_analysis_active = False
         
         # 显示分析结果
         if st.session_state.analysis_results:
